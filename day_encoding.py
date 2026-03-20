@@ -21,4 +21,3 @@ df = add_group_xx(df, window_size=Config.window_size)
 df, drop_cols = add_lag_mesh(df, Config.n_ago)
  
 train, test = train_test_split_func(df, Config.train_start_day, Config.train_end_day, Config.test_start_day, Config.test_end_day)
-
