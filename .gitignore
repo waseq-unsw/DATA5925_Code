@@ -2,3 +2,4 @@ cell_POIcat.csv/*
 yjmob100k-dataset2.csv*
 yjmob100k-dataset1.csv*
 POI_datacategories_with_top11.csv
+grid_zone_features.parquet/
