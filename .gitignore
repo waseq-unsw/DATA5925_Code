@@ -1,0 +1,2 @@
+# Omit all local datasets from git commits
+data/
