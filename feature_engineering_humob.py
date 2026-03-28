@@ -9,7 +9,7 @@ zones = ["Arts and Entertainment", "Business and Professional Services",
     "Health and Medicine", "Landmarks and Outdoors", "Nightlife Spot",
     "Retail", "Sports and Recreation", "Travel and Transportation"]
 
-weekend_list = [0, 1, 6, 7, 8, 13, 14, 20, 21, 27, 28, 29, 34, 35, 37, 41, 42, 
+holiday_list = [0, 1, 6, 7, 8, 13, 14, 20, 21, 27, 28, 29, 34, 35, 37, 41, 42, 
                 48, 49, 50, 55, 56, 62, 63, 69, 70]
 
 zone_mapping = {
@@ -100,6 +100,45 @@ zone_mapping = {
     "Research Facility": "Business and Professional Services",
 }
 
+motif_map = {
+    'Stayed Home': 0,
+    'Rule I': 1,
+    'Rule II': 2,
+    'Rule III': 3,
+    'Rule IV': 4,
+    'Complex/Other': 5,
+    'Unknown': 6
+}
+
+def classify_motif(row):
+    N = row['N']
+    stops = sorted(row['stops']) # Sort lengths to easily match the rules mathematically
+    
+    if N <= 1:
+        return 'Stayed Home'
+        
+    num_tours = len(stops)
+    
+    # Rule II: 1 tour with N-1 stops
+    if num_tours == 1 and stops == [N - 1]:
+        return 'Rule II'
+        
+    elif num_tours == 2:
+        # Rule I: 1 tour with 1 stop, 1 tour with N-2 stops
+        if stops == sorted([1, N - 2]):
+            return 'Rule I'
+        # Rule IV: 1 tour with 2 stops, 1 tour with N-3 stops
+        elif stops == sorted([2, N - 3]):
+            return 'Rule IV'
+            
+    # Rule III: 2 tours with 1 stop, 1 tour with N-3 stops
+    elif num_tours == 3:
+        if stops == sorted([1, 1, N - 3]):
+            return 'Rule III'
+            
+    return 'Complex/Other' # For rare motifs outside the primary 17
+
+
 def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     mob_df = pd.read_csv(mob_path)
     grid_df = pd.read_csv(grid_path)
@@ -141,26 +180,60 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
 
     # --- PART 2: Day Encoding ---
     mob_df['wd'] = mob_df['d'] % 7
-    mob_df['is_weekend'] = mob_df['d'].isin(weekend_list).astype(int)
-
-    # --- PART 3: PERSON TYPE ---
-    # Identify Home (t < 12)
-    home_locs = mob_df[mob_df['t'] < 12].groupby('uid')[['x', 'y']].agg(
-        lambda x: x.mode()[0] if not x.mode().empty else -1
-    ).reset_index().rename(columns={'x':'hx', 'y':'hy'})
+    mob_df['is_weekend'] = mob_df['wd'].isin([0, 6]).astype(int)
+    mob_df['is_holiday'] = mob_df['d'].isin(holiday_list).astype(int)
     
-    # Calculate Daily Radius/Complexity (N)
-    # Using string join to avoid coordinate math errors
+    # --- PART 3: PERSON TYPE ---
+    # Pre-calculate loc_id for the whole dataframe
     mob_df['loc_id'] = mob_df['x'].astype(str) + "_" + mob_df['y'].astype(str)
-    daily_n = mob_df.groupby(['uid', 'd'])['loc_id'].nunique().reset_index(name='daily_N')
+
+    # 1. Identify Home (Extremely Fast Vectorized Method)
+    night_df = mob_df[mob_df['t'] < 12]
+    # Count frequency of each location per user
+    home_counts = night_df.groupby(['uid', 'loc_id']).size().reset_index(name='visits')
+    
+    # Sort by uid and highest visits, then keep the top 1 for each user
+    home_locs = home_counts.sort_values(['uid', 'visits'], ascending=[True, False])
+                           .drop_duplicates('uid', keep='first')
+                           [['uid', 'loc_id']].rename(columns={'loc_id': 'home_id'})
+
+    # 2. Setup States
+    mob_df = pd.merge(mob_df, home_locs, on='uid', how='left')
+    mob_df['state'] = np.where(mob_df['loc_id'] == mob_df['home_id'], 'H', 'T')
+
+    # 3. Calculate N (Total unique locations visited per user per day)
+    daily_n = mob_df.groupby(['uid', 'd'])['loc_id'].nunique().reset_index(name='N')
+
+    # 4. Compress Timeline (Only keep rows where the location changes)
+    mob_df = mob_df.sort_values(by=['uid', 'd', 't'])
+    mob_df['prev_loc'] = mob_df.groupby(['uid', 'd'])['loc_id'].shift()
+    df_seq = mob_df[mob_df['loc_id'] != mob_df['prev_loc']].copy()
+
+    # 5. Extract Tours (Groups of 'T' separated by 'H')
+    df_seq['is_home'] = (df_seq['state'] == 'H')
+    df_seq['tour_id'] = df_seq.groupby(['uid', 'd'])['is_home'].cumsum()
+    # Count stops in each tour
+    tours_only = df_seq[df_seq['state'] == 'T']
+    tour_lengths = tours_only.groupby(['uid', 'd', 'tour_id']).size().reset_index(name='stops')
+    # Group lengths into a list for classification
+    daily_tours = tour_lengths.groupby(['uid', 'd'])['stops'].apply(list).reset_index()
+
+    # 6. Merge and Classify
+    daily_motifs = pd.merge(daily_n, daily_tours, on=['uid', 'd'], how='left')
+    daily_motifs['stops'] = daily_motifs['stops'].apply(lambda x: x if isinstance(x, list) else [])
+    daily_motifs['daily_rule'] = daily_motifs.apply(classify_motif, axis=1)
+
+    # 7. Extract dominant characteristic motif per user
+    user_category = daily_motifs.groupby('uid')['daily_rule'].apply(
+        lambda x: x.value_counts().idxmax()
+    ).reset_index(name='characteristic_motif')
+    # Map text motifs to integers for PyTorch Embedding layers
+    mob_df['motif_id'] = mob_df['characteristic_motif'].map(motif_map).astype(int)
 
     # --- PART 3: FINAL ASSEMBLY ---
-    print("📦 Merging and Saving...")
     mob_df = mob_df.merge(lda_df, on=['x', 'y'], how='left').fillna(0)
     mob_df = mob_df.merge(home_locs, on='uid', how='left')
     mob_df = mob_df.merge(daily_n, on=['uid', 'd'], how='left')
-    
-    
     
     # Time Delta (Sequence Logic)
     mob_df = mob_df.sort_values(['uid', 'd', 't'])
@@ -171,7 +244,6 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
 
     # Save to Parquet (Better than CSV for 100k records)
     mob_df.to_parquet(output_path, index=False)
-    print(f"✅ Success! Enriched dataset saved to: {output_path}")
 
 if __name__ == "__main__":
     run_feature_engineering(
