@@ -241,6 +241,10 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     mob_df.loc[mob_df['uid'] != mob_df['uid'].shift(), 'time_delta'] = 0
     mob_df['time_delta'] = mob_df['time_delta'].clip(upper=47)
 
+    # Drop extra columns
+    cols_to_drop = ['loc_id', 'home_id', 'state', 'prev_loc', 'characteristic_motif']
+    mob_df = mob_df.drop(columns=cols_to_drop, errors='ignore')
+
     # Save to Parquet (Better than CSV for 100k records)
     mob_df.to_parquet(output_path, index=False)
 
