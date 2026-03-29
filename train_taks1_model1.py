@@ -1,0 +1,175 @@
+import os
+import argparse
+import logging
+import random
+import datetime
+from tqdm import tqdm
+import numpy as np
+
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.tensorboard import SummaryWriter
+from dataset import *
+from model import *
+
+
+def set_random_seed(seed=0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def collate_fn(batch):
+    d = [item['d'] for item in batch]
+    t = [item['t'] for item in batch]
+    input_x = [item['input_x'] for item in batch]
+    input_y = [item['input_y'] for item in batch]
+    time_delta = [item['time_delta'] for item in batch]
+    label_x = [item['label_x'] for item in batch]
+    label_y = [item['label_y'] for item in batch]
+    lda = [item['lda'] for item in batch]
+    density = [item['density'] for item in batch]
+    weekend = [item['weekend'] for item in batch]
+    motif = [item['motif'] for item in batch]
+    len_tensor = torch.tensor([item['len'] for item in batch])
+
+    d_padded = pad_sequence(d, batch_first=True, padding_value=0)
+    t_padded = pad_sequence(t, batch_first=True, padding_value=0)
+    input_x_padded = pad_sequence(input_x, batch_first=True, padding_value=0)
+    input_y_padded = pad_sequence(input_y, batch_first=True, padding_value=0)
+    time_delta_padded = pad_sequence(time_delta, batch_first=True, padding_value=0)
+    label_x_padded = pad_sequence(label_x, batch_first=True, padding_value=0)
+    label_y_padded = pad_sequence(label_y, batch_first=True, padding_value=0)
+    lda_padded = pad_sequence(lda, batch_first=True, padding_value=0.0)
+    density_padded = pad_sequence(density, batch_first=True, padding_value=0.0)
+    weekend_padded = pad_sequence(weekend, batch_first=True, padding_value=0)
+    motif_padded = pad_sequence(motif, batch_first=True, padding_value=0)
+
+    return {
+        'd': d_padded,
+        't': t_padded,
+        'input_x': input_x_padded,
+        'input_y': input_y_padded,
+        'time_delta': time_delta_padded,
+        'label_x': label_x_padded,
+        'label_y': label_y_padded,
+        'len': len_tensor,
+        'lda': lda_padded,
+        'density': density_padded, 
+        'weekend': weekend_padded, 
+        'motif': motif_padded
+    }
+
+
+def task1(args):
+    name = f'batchsize{args.batch_size}_epochs{args.epochs}_embedsize{args.embed_size}_layersnum{args.layers_num}_headsnum{args.heads_num}_cuda{args.cuda}_lr{args.lr}_seed{args.seed}'
+    current_time = datetime.datetime.now()
+
+    log_path = os.path.join('log', 'task1', name)
+    tensorboard_log_path = os.path.join('tb_log', 'task1', name)
+    checkpoint_path = os.path.join('checkpoint', 'task1', name)
+
+    os.makedirs(log_path, exist_ok=True)
+    os.makedirs(tensorboard_log_path, exist_ok=True)
+    os.makedirs(checkpoint_path, exist_ok=True)
+
+    # --- NEW: DEFINE PERSISTENT CHECKPOINT PATH ---
+    # We use a fixed name like 'latest.pth' so the script can find it automatically
+    latest_ckpt_path = os.path.join(checkpoint_path, 'latest_checkpoint.pth')
+
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        filename=os.path.join(log_path, f'{current_time.strftime("%Y_%m_%d_%H_%M_%S")}.txt'),
+                        filemode='w')
+    writer = SummaryWriter(tensorboard_log_path)
+
+    task1_dataset_train = HuMobDatasetTask1Train('./data/yjmob100k-dataset1.csv.gz')
+    task1_dataloader_train = DataLoader(task1_dataset_train, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=args.num_workers)
+
+    device = torch.device(f'cuda:{args.cuda}')
+    model = LPBERT(args.layers_num, args.heads_num, args.embed_size).to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler =torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    criterion = nn.CrossEntropyLoss()
+
+    # --- NEW: RESUME LOGIC ---
+    start_epoch = 0
+    if os.path.exists(latest_ckpt_path):
+        logging.info(f"Loading checkpoint found at: {latest_ckpt_path}")
+        checkpoint = torch.load(latest_ckpt_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1 # Start at the NEXT epoch
+        logging.info(f"Resuming from Epoch {start_epoch}")
+
+    # --- MODIFIED: START RANGE AT start_epoch ---
+    for epoch_id in range(start_epoch, args.epochs):
+        model.train()
+        for batch_id, batch in enumerate(tqdm(task1_dataloader_train)):
+            batch['d'] = batch['d'].to(device)
+            batch['t'] = batch['t'].to(device)
+            batch['input_x'] = batch['input_x'].to(device)
+            batch['input_y'] = batch['input_y'].to(device)
+            batch['time_delta'] = batch['time_delta'].to(device)
+            batch['label_x'] = batch['label_x'].to(device)
+            batch['label_y'] = batch['label_y'].to(device)
+            batch['len'] = batch['len'].to(device)
+            batch['lda'] = batch['lda'].to(device)
+            batch['density'] = batch['density'].to(device)
+            batch['weekend'] = batch['weekend'].to(device)
+            batch['motif'] = batch['motif'].to(device)
+
+            output = model(batch['d'], batch['t'], batch['input_x'], batch['input_y'], batch['time_delta'], batch['lda'], batch['density'], batch['weekend'], batch['motif'],batch['len'])
+            label = torch.stack((batch['label_x'], batch['label_y']), dim=-1)
+
+            pred_mask = (batch['input_x'] == 201)
+            pred_mask = torch.cat((pred_mask.unsqueeze(-1), pred_mask.unsqueeze(-1)), dim=-1)
+
+            loss = criterion(output[pred_mask], label[pred_mask])
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            step = epoch_id * len(task1_dataloader_train) + batch_id
+            writer.add_scalar('loss', loss.detach().item(), step)
+        scheduler.step()
+
+        logging.info(f'epoch: {epoch_id}, loss: {loss.detach().item()}')
+
+        # We save everything needed to resume training perfectly
+        save_dict = {
+            'epoch': epoch_id,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+        }
+        torch.save(save_dict, latest_ckpt_path)
+        
+    torch.save(model.state_dict(), os.path.join(checkpoint_path, f'{current_time.strftime("%Y_%m_%d_%H_%M_%S")}.pth'))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--epochs', type=int, default=200)
+    parser.add_argument('--num_workers', type=int, default=2)
+    parser.add_argument('--embed_size', type=int, default=128)
+    parser.add_argument('--layers_num', type=int, default=4)
+    parser.add_argument('--heads_num', type=int, default=8)
+    parser.add_argument('--cuda', type=int, default=0)
+    parser.add_argument('--lr', type=float, default=2e-5)
+    parser.add_argument('--seed', type=int, default=0)
+    args = parser.parse_args()
+
+    set_random_seed(args.seed)
+
+    task1(args)
+
