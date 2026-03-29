@@ -89,7 +89,7 @@ def task1(args):
                         filemode='w')
     writer = SummaryWriter(tensorboard_log_path)
 
-    task1_dataset_train = HuMobDatasetTask1Train('./data/yjmob100k-dataset1.csv.gz')
+    task1_dataset_train = HuMobDatasetTask1Train('./data/enriched_human_mobility_100k.parquet')
     task1_dataloader_train = DataLoader(task1_dataset_train, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=args.num_workers)
 
     device = torch.device(f'cuda:{args.cuda}')
