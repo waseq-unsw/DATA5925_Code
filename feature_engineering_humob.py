@@ -193,9 +193,7 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     home_counts = night_df.groupby(['uid', 'loc_id']).size().reset_index(name='visits')
     
     # Sort by uid and highest visits, then keep the top 1 for each user
-    home_locs = home_counts.sort_values(['uid', 'visits'], ascending=[True, False])
-                           .drop_duplicates('uid', keep='first')
-                           [['uid', 'loc_id']].rename(columns={'loc_id': 'home_id'})
+    home_locs = home_counts.sort_values(['uid', 'visits'], ascending=[True, False]).drop_duplicates('uid', keep='first')[['uid', 'loc_id']].rename(columns={'loc_id': 'home_id'})
 
     # 2. Setup States
     mob_df = pd.merge(mob_df, home_locs, on='uid', how='left')
@@ -227,14 +225,15 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     user_category = daily_motifs.groupby('uid')['daily_rule'].apply(
         lambda x: x.value_counts().idxmax()
     ).reset_index(name='characteristic_motif')
-    # Map text motifs to integers for PyTorch Embedding layers
-    mob_df['motif_id'] = mob_df['characteristic_motif'].map(motif_map).astype(int)
 
     # --- PART 3: FINAL ASSEMBLY ---
+    # Merge LDA features
     mob_df = mob_df.merge(lda_df, on=['x', 'y'], how='left').fillna(0)
-    mob_df = mob_df.merge(home_locs, on='uid', how='left')
-    mob_df = mob_df.merge(daily_n, on=['uid', 'd'], how='left')
-    
+    # Merge the Person Type
+    mob_df = mob_df.merge(user_category, on='uid', how='left')
+    mob_df['characteristic_motif'] = mob_df['characteristic_motif'].fillna('Unknown')
+    mob_df['motif_id'] = mob_df['characteristic_motif'].map(motif_map).astype(int)
+
     # Time Delta (Sequence Logic)
     mob_df = mob_df.sort_values(['uid', 'd', 't'])
     mob_df['time_delta'] = (mob_df['d'] * 48 + mob_df['t']).diff().fillna(0)
