@@ -112,7 +112,7 @@ class HuMobDatasetTask1Train(Dataset):
   
 class HuMobDatasetTask1Val(Dataset):
     def __init__(self, path):
-        self.df = pd.read_csv(path)
+        self.df = pd.read_parquet(path)
 
         self.d_array = []
         self.t_array = []
