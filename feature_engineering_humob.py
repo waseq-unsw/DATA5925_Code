@@ -222,7 +222,8 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     daily_motifs['daily_rule'] = daily_motifs.apply(classify_motif, axis=1)
 
     # 7. Extract dominant characteristic motif per user
-    user_category = daily_motifs.groupby('uid')['daily_rule'].apply(
+    training_days = daily_motifs[daily_motifs['d'] < 60]
+    user_category = training_days.groupby('uid')['daily_rule'].apply(
         lambda x: x.value_counts().idxmax()
     ).reset_index(name='characteristic_motif')
 
