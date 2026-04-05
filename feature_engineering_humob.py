@@ -36,7 +36,7 @@ zone_mapping = {
     "Sweets ": "Dining and Drinking",
     "Wine Bar": "Dining and Drinking",
     "Pub": "Dining and Drinking",
-    "Disco": "Nightlife Spot",
+    "Disco": "Arts and Entertainment",
     "Beer Garden": "Dining and Drinking",
     "Fast Food": "Dining and Drinking",
     "Karaoke": "Arts and Entertainment", 
@@ -64,9 +64,9 @@ zone_mapping = {
     "Parking Area": "Travel and Transportation",
     "Casino": "Arts and Entertainment",
     "Hospital": "Health and Medicine",
-    "Pharmacy": "Retail",
+    "Pharmacy": "Health and Medicine",
     "Chiropractic": "Health and Medicine",
-    "Elderly Care Home": "Health and Medicine", 
+    "Elderly Care Home": "Community and Government", 
     "Fishing": "Sports and Recreation",
     "School": "Community and Government",
     "Cram School": "Community and Government",
@@ -76,7 +76,7 @@ zone_mapping = {
     "Post Office": "Community and Government",
     "Laundry ": "Business and Professional Services",
     "Driving School": "Community and Government",
-    "Wedding Ceremony": "Event", 
+    "Wedding Ceremony": "Business and Professional Services", 
     "Cemetary": "Community and Government",
     "Bank": "Business and Professional Services",
     "Vet": "Health and Medicine",
@@ -92,12 +92,12 @@ zone_mapping = {
     "IT Office": "Business and Professional Services",
     "Publisher Office": "Business and Professional Services",
     "Building Material": "Retail",
-    "Gardening": "Business and Professional Services",
+    "Gardening": "Retail",
     "Heavy Industry": "Business and Professional Services",
     "NPO": "Community and Government",
-    "Utility Copany": "Community and Government",
+    "Utility Copany": "Business and Professional Services",
     "Port": "Travel and Transportation",
-    "Research Facility": "Business and Professional Services",
+    "Research Facility": "Business and Professional Services"
 }
 
 motif_map = {
@@ -162,16 +162,18 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
             dictionary.add_documents([[z]])
 
     corpus = [dictionary.doc2bow(doc) for doc in grid_docs]
-    lda = gensim.models.LdaModel(corpus=corpus, id2word=dictionary, num_topics=5, passes=20, random_state=42)
+
+    n_topics = 7
+    lda = gensim.models.LdaModel(corpus=corpus, id2word=dictionary, num_topics=n_topics, passes=20, random_state=42)
 
     lda_vectors = []
     for doc in corpus:
-        vec = np.zeros(5)
+        vec = np.zeros(n_topics)
         for topic, prob in lda.get_document_topics(doc):
             vec[topic] = prob
         lda_vectors.append(vec)
     
-    lda_df = pd.DataFrame(lda_vectors, columns=[f'lda_topic_{i}' for i in range(5)])
+    lda_df = pd.DataFrame(lda_vectors, columns=[f'lda_topic_{i}' for i in range(n_topics)])
     lda_df[['x', 'y']] = cell_keys
     
     # Add Density
