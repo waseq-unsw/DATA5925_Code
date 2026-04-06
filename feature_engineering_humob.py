@@ -163,7 +163,7 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
 
     corpus = [dictionary.doc2bow(doc) for doc in grid_docs]
 
-    n_topics = 7
+    n_topics = 5
     lda = gensim.models.LdaModel(corpus=corpus, id2word=dictionary, num_topics=n_topics, passes=20, random_state=42)
 
     lda_vectors = []
@@ -189,25 +189,49 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     # Pre-calculate loc_id for the whole dataframe
     mob_df['loc_id'] = mob_df['x'].astype(str) + "_" + mob_df['y'].astype(str)
 
-    # 1. Identify Home (Extremely Fast Vectorized Method)
+    # 1. Identify Home
     night_df = mob_df[mob_df['t'] < 12]
     # Count frequency of each location per user
-    home_counts = night_df.groupby(['uid', 'loc_id']).size().reset_index(name='visits')
+    home_counts = night_df.groupby(['uid', 'loc_id','x','y']).size().reset_index(name='visits')
+    anchor_homes = home_counts.sort_values(['uid', 'visits'], ascending=[True, False]).drop_duplicates('uid', keep='first')
+    anchor_homes = anchor_homes.rename(columns={
+        'x': 'anchor_x', 
+        'y': 'anchor_y', 
+        'loc_id': 'anchor_id'
+    })
+    #Merge Anchor back to all night locations to calculate spatial distance
+    home_candidates = pd.merge(home_counts, anchor_homes[['uid', 'anchor_x', 'anchor_y', 'anchor_id']], on='uid')
+
+    #Define the "Home Cluster" (Any night location within 1 grid cell of the Anchor)
+    home_candidates['is_home_cell'] = (
+        (abs(home_candidates['x'] - home_candidates['anchor_x']) <= 1) & 
+        (abs(home_candidates['y'] - home_candidates['anchor_y']) <= 1)
+    )
+
+    #Extract a mapping of which messy locations belong to the clean Anchor
+    home_cluster_map = home_candidates[home_candidates['is_home_cell']][['uid', 'loc_id', 'anchor_id', 'anchor_x', 'anchor_y', 'is_home_cell']]
+    mob_df = pd.merge(mob_df, home_cluster_map, on=['uid', 'loc_id'], how='left')
     
-    # Sort by uid and highest visits, then keep the top 1 for each user
-    home_locs = home_counts.sort_values(['uid', 'visits'], ascending=[True, False]).drop_duplicates('uid', keep='first')[['uid', 'loc_id']].rename(columns={'loc_id': 'home_id'})
+    #Assign States: If it's in the Home Cluster, it's 'H'. Otherwise, 'T'.
+    mob_df['state'] = np.where(mob_df['is_home_cell'].notna(), 'H', 'T')
+    mob_df['loc_id'] = np.where(mob_df['state'] == 'H', mob_df['anchor_id'], mob_df['loc_id'])
+    mob_df['x'] = np.where(mob_df['state'] == 'H', mob_df['anchor_x'], mob_df['x']).astype(int)
+    mob_df['y'] = np.where(mob_df['state'] == 'H', mob_df['anchor_y'], mob_df['y']).astype(int)
 
-    # 2. Setup States
-    mob_df = pd.merge(mob_df, home_locs, on='uid', how='left')
-    mob_df['state'] = np.where(mob_df['loc_id'] == mob_df['home_id'], 'H', 'T')
+    # Clean up temporary columns
+    mob_df = mob_df.drop(columns=['anchor_id', 'anchor_x', 'anchor_y', 'is_home_cell'])
 
-    # 3. Calculate N (Total unique locations visited per user per day)
-    daily_n = mob_df.groupby(['uid', 'd'])['loc_id'].nunique().reset_index(name='N')
-
-    # 4. Compress Timeline (Only keep rows where the location changes)
     mob_df = mob_df.sort_values(by=['uid', 'd', 't'])
     mob_df['prev_loc'] = mob_df.groupby(['uid', 'd'])['loc_id'].shift()
     df_seq = mob_df[mob_df['loc_id'] != mob_df['prev_loc']].copy()
+    
+    # 4. NEW: Calculate N based on sequence stops
+    # N = 1 (Home) + Total sequential 'T' stops made that day
+    df_seq['is_transit'] = (df_seq['state'] == 'T')
+    t_counts = df_seq.groupby(['uid', 'd'])['is_transit'].sum().reset_index(name='T_count')
+    t_counts['N'] = t_counts['T_count'] + 1
+    daily_n = t_counts[['uid', 'd', 'N']]
+    df_seq = df_seq.drop(columns=['is_transit'])
 
     # 5. Extract Tours (Groups of 'T' separated by 'H')
     df_seq['is_home'] = (df_seq['state'] == 'H')
@@ -222,20 +246,28 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     daily_motifs = pd.merge(daily_n, daily_tours, on=['uid', 'd'], how='left')
     daily_motifs['stops'] = daily_motifs['stops'].apply(lambda x: x if isinstance(x, list) else [])
     daily_motifs['daily_rule'] = daily_motifs.apply(classify_motif, axis=1)
+    daily_motifs['motif_id'] = 'motif_' + daily_motifs['daily_rule'].map(motif_map).astype(str)
 
     # 7. Extract dominant characteristic motif per user
     training_days = daily_motifs[daily_motifs['d'] < 60]
-    user_category = training_days.groupby('uid')['daily_rule'].apply(
-        lambda x: x.value_counts().idxmax()
-    ).reset_index(name='characteristic_motif')
+    motif_counts = training_days.groupby(['uid', 'motif_id']).size().unstack(fill_value=0)
+    motif_distribution = motif_counts.div(motif_counts.sum(axis=1), axis=0)
+    
+    #user_category = training_days.groupby('uid')['daily_rule'].apply(
+    #    lambda x: x.value_counts().idxmax()
+    #).reset_index(name='characteristic_motif')
 
     # --- PART 3: FINAL ASSEMBLY ---
     # Merge LDA features
     mob_df = mob_df.merge(lda_df, on=['x', 'y'], how='left').fillna(0)
     # Merge the Person Type
-    mob_df = mob_df.merge(user_category, on='uid', how='left')
-    mob_df['characteristic_motif'] = mob_df['characteristic_motif'].fillna('Unknown')
-    mob_df['motif_id'] = mob_df['characteristic_motif'].map(motif_map).astype(int)
+    expected_rules = ['motif_0', 'motif_1', 'motif_2', 'motif_3', 'motif_4', 'motif_5', 'motif_6']
+    mob_df = mob_df.merge(motif_distribution, on='uid', how='left')
+    missing_cols = list(set(expected_rules) - set(mob_df.columns))
+    mob_df[missing_cols] = 0.0 
+    # 2. Handle missing users (fill NaNs with 0.0 for the neural network)
+    # This replaces your old .fillna('Unknown') logic
+    mob_df[expected_rules] = mob_df[expected_rules].fillna(0.0)
 
     # Time Delta (Sequence Logic)
     mob_df = mob_df.sort_values(['uid', 'd', 't'])
@@ -245,7 +277,7 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     mob_df['time_delta'] = mob_df['time_delta'].clip(upper=47)
 
     # Drop extra columns
-    cols_to_drop = ['loc_id', 'home_id', 'state', 'prev_loc', 'characteristic_motif']
+    cols_to_drop = ['loc_id', 'home_id', 'state', 'prev_loc']
     mob_df = mob_df.drop(columns=cols_to_drop, errors='ignore')
 
     # Save to Parquet (Better than CSV for 100k records)
