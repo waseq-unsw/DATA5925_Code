@@ -2,3 +2,7 @@ cell_POIcat.csv/*
 yjmob100k-dataset1.csv.gz/*
 yjmob100k-dataset1.csv/*
 yjmob100k-dataset1.csv*
+POI_datacategories_with_top11.csv
+japan_checkins.csv
+train_sequences.h5
+val_sequences.h5
