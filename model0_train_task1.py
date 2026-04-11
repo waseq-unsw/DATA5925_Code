@@ -11,8 +11,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.tensorboard import SummaryWriter
-from dataset import *
-from model import *
+from model0_dataset import *
+from model0 import *
 
 
 def set_random_seed(seed=0):
