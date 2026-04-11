@@ -285,8 +285,8 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
 
 if __name__ == "__main__":
     run_feature_engineering(
-        mob_path="yjmob100k-dataset1.csv.gz",
-        grid_path="cell_POIcat.csv.gz",
-        poi_map_path="POI_datacategories.csv",
-        output_path="enriched_human_mobility_100k.parquet"
+        mob_path="./data/yjmob100k-dataset1.csv.gz",
+        grid_path="./data/cell_POIcat.csv.gz",
+        poi_map_path="./data/POI_datacategories.csv",
+        output_path="./data/enriched_human_mobility_100k.parquet"
     )
