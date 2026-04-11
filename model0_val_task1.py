@@ -6,8 +6,8 @@ from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
-from dataset import *
-from model import *
+from model0_dataset import *
+from model0 import *
 
 
 def task1(args):
