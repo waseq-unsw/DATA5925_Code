@@ -41,11 +41,11 @@ class HuMobDatasetTask1Train(Dataset):
             # --- NEW: Extract Features ---
             # lda shape will be (seq_len, 5)
             lda_feat = traj[['lda_topic_0', 'lda_topic_1', 'lda_topic_2', 'lda_topic_3', 'lda_topic_4']].to_numpy(dtype=np.float32)
-            density = traj['poi_density'].to_numpy(dtype=np.float32)
+            density = np.log1p(traj['poi_density'].to_numpy(dtype=np.float32))
             
             # Add +1 to categoricals so 0 can be reserved for <PAD>
             weekend = traj['is_weekend'].to_numpy(dtype=np.int64) + 1 
-            motif = traj['motif_id'].to_numpy(dtype=np.int64) + 1
+            motif = traj[['motif_0', 'motif_1', 'motif_2', 'motif_3', 'motif_4', 'motif_5', 'motif_6']].to_numpy(dtype=np.float32)
           
             d_unique = np.unique(d)
             if len(d_unique[(d_unique >= np.min(d_unique)) & (d_unique <= np.max(d_unique) - 14)]) == 0:
@@ -142,11 +142,11 @@ class HuMobDatasetTask1Val(Dataset):
             # --- NEW: Extract Features ---
             # lda shape will be (seq_len, 5)
             lda_feat = traj[['lda_topic_0', 'lda_topic_1', 'lda_topic_2', 'lda_topic_3', 'lda_topic_4']].to_numpy(dtype=np.float32)
-            density = traj['poi_density'].to_numpy(dtype=np.float32)
+            density = np.log1p(traj['poi_density'].to_numpy(dtype=np.float32))
             
             # Add +1 to categoricals so 0 can be reserved for <PAD>
             weekend = traj['is_weekend'].to_numpy(dtype=np.int64) + 1 
-            motif = traj['motif_id'].to_numpy(dtype=np.int64) + 1
+            motif = traj[['motif_0', 'motif_1', 'motif_2', 'motif_3', 'motif_4', 'motif_5', 'motif_6']].to_numpy(dtype=np.float32)
             
             mask_d_start = 60
             mask_d_end = 74
