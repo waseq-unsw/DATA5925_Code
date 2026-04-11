@@ -99,15 +99,16 @@ class WeekendEmbeddingModel(nn.Module):
         self.embedding = nn.Embedding(3, embed_size)
     def forward(self, weekend): return self.embedding(weekend)
 
-class MotifEmbeddingModel(nn.Module):
+class MotifContinuousProj(nn.Module):
     ''' 
-    0: <PAD>, 
-    1-7: Motifs 
+    Projects the 7-dimensional motif distribution [motif_0...motif_6] 
+    into embed_size.
     '''
     def __init__(self, embed_size):
-        super(MotifEmbeddingModel, self).__init__()
-        self.embedding = nn.Embedding(8, embed_size)
-    def forward(self, motif): return self.embedding(motif)
+        super(MotifContinuousProj, self).__init__()
+        self.proj = nn.Linear(7, embed_size) 
+    def forward(self, motif): 
+        return self.proj(motif)
 
 class SpatialContinuousProj(nn.Module):
     ''' Projects [LDA_0...LDA_4, Density] into embed_size '''
@@ -130,10 +131,10 @@ class EmbeddingLayer(nn.Module):
         self.timedelta_embedding = TimedeltaEmbeddingModel(embed_size)
         # --- NEW ---
         self.weekend_embedding = WeekendEmbeddingModel(embed_size)
-        self.motif_embedding = MotifEmbeddingModel(embed_size)
+        self.motif_proj = MotifContinuousProj(embed_size)
         self.spatial_proj = SpatialContinuousProj(embed_size)
 
-    def forward(self, day, time, location_x, location_y, timedelta):
+    def forward(self, day, time, location_x, location_y, timedelta, lda, density, weekend, motif):
         day_embed = self.day_embedding(day)
         time_embed = self.time_embedding(time)
         location_x_embed = self.location_x_embedding(location_x)
@@ -141,7 +142,7 @@ class EmbeddingLayer(nn.Module):
         timedelta_embed = self.timedelta_embedding(timedelta)
         # --- NEW ---
         weekend_embed = self.weekend_embedding(weekend)
-        motif_embed = self.motif_embedding(motif)
+        motif_embed = self.motif_proj(motif)
         spatial_embed = self.spatial_proj(lda, density)
         
         embed = day_embed + time_embed + location_x_embed + location_y_embed + timedelta_embed + weekend_embed + motif_embed + spatial_embed
@@ -152,7 +153,7 @@ class TransformerEncoderModel(nn.Module):
     def __init__(self, layers_num, heads_num, embed_size):
         super(TransformerEncoderModel, self).__init__()
 
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=embed_size, nhead=heads_num)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=embed_size, nhead=heads_num, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=layers_num)
 
     def forward(self, input, src_key_padding_mask):
@@ -190,17 +191,16 @@ class LPBERT(nn.Module):
         self.transformer_encoder = TransformerEncoderModel(layers_num, heads_num, embed_size)
         self.ffn_layer = FFNLayer(embed_size)
 
-    def forward(self, day, time, location_x, location_y, timedelta, len):
-        embed = self.embedding_layer(day, time, location_x, location_y, timedelta)
-        embed = embed.transpose(0, 1)
+    def forward(self, day, time, location_x, location_y, timedelta, lda, density, weekend, motif, len):
+        embed = self.embedding_layer(day, time, location_x, location_y, timedelta, lda, density, weekend, motif)
+        # embed = embed.transpose(0, 1)
 
         max_len = day.shape[-1]
         indices = torch.arange(max_len, device=len.device).unsqueeze(0)
         src_key_padding_mask = ~(indices < len.unsqueeze(-1))
 
         transformer_encoder_output = self.transformer_encoder(embed, src_key_padding_mask)
-        transformer_encoder_output = transformer_encoder_output.transpose(0, 1)
+        # transformer_encoder_output = transformer_encoder_output.transpose(0, 1)
 
         output = self.ffn_layer(transformer_encoder_output)
         return output
-
