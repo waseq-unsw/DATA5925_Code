@@ -110,6 +110,21 @@ motif_map = {
     'Unknown': 6
 }
 
+def activity_period(t):
+    hour = t // 2
+    period = np.zeros_like(hour)
+    period[(hour >= 1) & (hour < 5)] = 1 # Deep Rest (01:00–05:00)
+    period[(hour >= 5) & (hour < 7)] = 2 # Very Early (05:00–07:00)
+    period[(hour >= 7) & (hour < 9)] = 3 # Early (07:00–09:00)
+    period[(hour >= 9) & (hour < 17)] = 4 # Active (09:00–17:00)
+    period[(hour >= 17) & (hour < 20)] = 5 # High Active (17:00–20:00)
+    period[(hour >= 22) | (hour == 0)] = 0 # Rest (00:00–01:00 & 22:00–24:00)
+    return period
+
+def time_of_day(t):
+    hour = t // 2
+    return (hour >= 12).astype(int)  # 0 = AM, 1 = PM
+
 def classify_motif(row):
     N = row['N']
     stops = sorted(row['stops']) # Sort lengths to easily match the rules mathematically
@@ -180,11 +195,13 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     poi_counts = grid_df.groupby(['x', 'y'])['POI_count'].sum().reset_index(name='poi_density')
     lda_df = lda_df.merge(poi_counts, on=['x', 'y'], how='left')
 
-    # --- PART 2: Day Encoding ---
-    mob_df['wd'] = mob_df['d'] % 7
-    mob_df['is_weekend'] = mob_df['wd'].isin([0, 6]).astype(int)
+    # --- PART 2: Day and Time Encoding ---
+    mob_df['day_of_week'] = mob_df['d'] % 7
+    mob_df['is_weekend'] = mob_df['day_of_week'].isin([0, 6]).astype(int)
     mob_df['is_holiday'] = mob_df['d'].isin(holiday_list).astype(int)
-    
+    mob_df['activity_period'] = activity_period(mob_df['t'].values)
+    mob_df['time_of_day'] = time_of_day(mob_df['t'].values)
+
     # --- PART 3: PERSON TYPE ---
     # Pre-calculate loc_id for the whole dataframe
     mob_df['loc_id'] = mob_df['x'].astype(str) + "_" + mob_df['y'].astype(str)
@@ -247,6 +264,7 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     daily_motifs['stops'] = daily_motifs['stops'].apply(lambda x: x if isinstance(x, list) else [])
     daily_motifs['daily_rule'] = daily_motifs.apply(classify_motif, axis=1)
     daily_motifs['motif_id'] = 'motif_' + daily_motifs['daily_rule'].map(motif_map).astype(str)
+    mob_df['state'] = mob_df['state'].map({'T': 0, 'H': 1}).astype(int)
 
     # 7. Extract dominant characteristic motif per user
     training_days = daily_motifs[daily_motifs['d'] < 60]
@@ -277,7 +295,7 @@ def run_feature_engineering(mob_path, grid_path, poi_map_path, output_path):
     mob_df['time_delta'] = mob_df['time_delta'].clip(upper=47)
 
     # Drop extra columns
-    cols_to_drop = ['loc_id', 'home_id', 'state', 'prev_loc']
+    cols_to_drop = ['loc_id', 'home_id', 'prev_loc']
     mob_df = mob_df.drop(columns=cols_to_drop, errors='ignore')
 
     # Save to Parquet (Better than CSV for 100k records)
