@@ -1,8 +1,7 @@
-cell_POIcat.csv/*
-yjmob100k-dataset1.csv.gz/*
-yjmob100k-dataset1.csv/*
-yjmob100k-dataset1.csv*
+data/*
 Foursquare_mapping.csv
 job_train.pbs
 job_matrix_calc.pbs
 job_val.pbs
+figures/*
+visualization_analysis.py
