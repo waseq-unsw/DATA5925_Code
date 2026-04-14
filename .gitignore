@@ -3,5 +3,5 @@ Foursquare_mapping.csv
 job_train.pbs
 job_matrix_calc.pbs
 job_val.pbs
-figures/*
-visualization_analysis.py
+Visualization.ipynb
+.ipynb_checkpoints/*
