@@ -8,3 +8,4 @@ Experimental results show that spatial data cleaning provides the most significa
 
 Overall, the findings suggest that data preprocessing and effective feature representation are more critical than increasing feature complexity. This study provides a systematic evaluation of feature contributions and offers practical insights for the design of mobility prediction models.
 
+![image](./figures/Flowchart.png)
